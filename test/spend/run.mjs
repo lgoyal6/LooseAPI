@@ -1,0 +1,85 @@
+import { extractEvents, findAnomalies, monthlyTotal, fmt } from "../../lib/spend/costs.mjs";
+import { MESSAGES } from "./fixtures.mjs";
+
+const SERVICES = [
+  { id: "aws", name: "Amazon Web Services", domains: ["amazonaws.com", "aws.amazon.com"] },
+  { id: "cloudflare", name: "Cloudflare", domains: ["cloudflare.com"] },
+  { id: "vercel", name: "Vercel", domains: ["vercel.com"] },
+  { id: "anthropic", name: "Anthropic", domains: ["anthropic.com"] },
+  { id: "railway", name: "Railway", domains: ["railway.app", "railway.com"] },
+];
+
+let failures = 0;
+function check(label, actual, expected) {
+  const ok = JSON.stringify(actual) === JSON.stringify(expected);
+  if (!ok) failures++;
+  console.log(`${ok ? "PASS" : "FAIL"}  ${label}`);
+  if (!ok) console.log(`        expected ${JSON.stringify(expected)}\n        actual   ${JSON.stringify(actual)}`);
+}
+
+const events = extractEvents(MESSAGES, SERVICES);
+
+console.log("=== EXTRACTED EVENTS ===");
+for (const e of events) {
+  const bits = [
+    e.date.slice(0, 10),
+    e.service.padEnd(22),
+    e.kind.padEnd(18),
+    e.amountCents != null ? fmt(e.amountCents).padStart(8) : "        ",
+    e.creditsRemainingCents != null ? `credits=${fmt(e.creditsRemainingCents)}` : "",
+    e.via ? `via ${e.via.split("@").pop()}` : "",
+    e.unread ? (e.trashed ? "[unread,trashed]" : "[unread]") : "",
+  ];
+  console.log("  " + bits.join(" ").trimEnd());
+}
+
+console.log("\n=== ASSERTIONS ===");
+
+// The negative control must be rejected outright.
+check("marketing email ignored", events.some((e) => e.id === "19fe7d2d8c3dc463"), false);
+
+// Processor attribution: Stripe must not swallow the merchant.
+const exa = events.find((e) => e.id === "19fafb31f313c17f");
+check("Stripe receipt attributed to Exa Labs", exa?.service, "Exa Labs");
+check("Stripe recorded as processor, not merchant", exa?.via, "stripe.com");
+check("Exa amount parsed", exa?.amountCents, 2500);
+
+const railway = events.find((e) => e.id === "19fcf6ad8918af17");
+check("Stripe receipt attributed to Railway", railway?.service, "Railway");
+
+// First-party sender uses the dictionary.
+const cf = events.find((e) => e.id === "1a00a8151f6bb201");
+check("Cloudflare via dictionary", cf?.service, "Cloudflare");
+check("Cloudflare $0.00 invoice parsed", cf?.amountCents, 0);
+
+// AWS sequence.
+const closed = events.find((e) => e.id === "1a01811eec73d278");
+check("AWS closure classified", closed?.kind, "account_closed");
+check("AWS closure is top severity", closed?.severity, 3);
+check("AWS closure seen as unread", closed?.unread, true);
+check("AWS closure seen as trashed", closed?.trashed, true);
+
+const c10 = events.find((e) => e.id === "1a0114886d581845");
+check("AWS $10 balance parsed", c10?.creditsRemainingCents, 1000);
+check("AWS balance classified as credits_low", c10?.kind, "credits_low");
+
+// Anthropic credit grant must not be read as a charge.
+const ant = events.find((e) => e.id === "1a0120587125be1d");
+check("Anthropic credits_added not a charge", ant?.kind, "credits_added");
+check("Anthropic grant is severity 0", ant?.severity, 0);
+
+console.log("\n=== DERIVED ALERTS ===");
+const alerts = findAnomalies(events);
+for (const a of alerts) console.log(`  [sev ${a.severity}] ${a.kind}: ${a.message}`);
+
+const repeat = alerts.find((a) => a.kind === "repeat_charge");
+check("duplicate Exa charge detected", repeat?.service, "Exa Labs");
+
+const burn = alerts.find((a) => a.kind === "credit_burndown");
+check("AWS burndown detected", burn?.service, "Amazon Web Services");
+
+console.log("\n=== TOTALS ===");
+console.log(`  monthly recurring (35d): ${fmt(monthlyTotal(events))}`);
+
+console.log(`\n${failures === 0 ? "ALL PASS" : failures + " FAILURE(S)"}`);
+process.exit(failures === 0 ? 0 : 1);
