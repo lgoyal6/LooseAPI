@@ -1,61 +1,130 @@
 # LooseApi
 
-Map your email's footprint. LooseApi scans your Gmail **locally, in the browser**
-to surface every dev tool, free tier, subscription, and trial your address is tied
-to — and flags the ones quietly about to charge you.
+**Every subscription tracker watches recurring charges. Cloud credits aren't charges.**
 
-> **The wedge:** not a generic subscription tracker, but the money developers
-> leave on the table — forgotten free-tier signups, trials converting to paid, and
-> (later) unused API/cloud credits — for individuals, from their personal inbox.
+My AWS account burned through its free-plan credits and closed itself. Three
+emails told me it was happening — `$29 credits remaining`, `$10 credits
+remaining`, `your account has been closed`. All three were unread. Two were in
+Trash. My card was never charged, so no bank-based tracker would ever have seen
+it.
 
-## Principles
+LooseApi reads billing mail, projects credit balances forward, and tells you
+*before* the thing you depend on turns off.
 
-- **Local-first** — raw inbox content never leaves your device. The only Google
-  credential held is a short-lived, in-memory access token (GIS token model).
-- **Connect, don't custody** — later credit features use read-only tokens through
-  a stateless proxy; never a server-side secrets vault.
-- **Self-lookup only** — your inbox, your footprint. Never arbitrary emails.
+![Dashboard](docs/dashboard.png)
 
-## Stack
+Given those same three emails, it produces:
 
-Next.js 16 (App Router) · React 19 · TypeScript · Tailwind v4 · Dexie (IndexedDB).
+```
+Amazon Web Services: $10.00 credits left, burning $7.94/day -> ~1.3 days
+```
 
-## Run it
+The account closed 1.3 days later.
 
-See [SETUP.md](./SETUP.md) for the one-time Google OAuth setup (~5 min), then:
+---
+
+## What it tracks
+
+| | |
+|---|---|
+| **Credit burndown** | balances projected to zero at the observed rate |
+| **Dev tools** | Vercel, Railway, Supabase, Render, Neon, Cloudflare, Replit |
+| **Consumer subscriptions** | Netflix, Prime, Uber One, Spotify — no APIs exist, so email is the only source |
+| **Trials** | dated conversions, and cancellations that suppress them |
+| **API keys** | inventory with free-tier limits; secrets in the macOS Keychain, never on disk |
+| **Coding agents** | Claude Code and Codex token usage from local session logs |
+
+## Why email
+
+Three sources could tell you what you spend, and only one sees credits:
+
+| Source | Catches | Misses |
+|---|---|---|
+| **Email receipts** | signups, trials, credit balances, charges, closures | mail deleted before it is ever scanned |
+| Card / bank | every real charge | free tiers, credits, trials — no transaction exists |
+| Provider APIs | authoritative balances | only providers you connect; consumer plans have none |
+
+A burning-down credit balance produces **zero** bank transactions. That is the
+gap this fills.
+
+## Install
+
+macOS, Node 20+, no dependencies.
 
 ```bash
-npm install
-cp .env.local.example .env.local   # add your NEXT_PUBLIC_GOOGLE_CLIENT_ID
-npm run dev
+git clone https://github.com/lgoyal6/LooseAPI && cd LooseAPI
+npm install          # Next.js, for the dashboard only
+node bin/spend.mjs   # the CLI needs nothing
 ```
 
-Visit `/` for the landing page or `/app` to scan.
+See [SETUP.md](SETUP.md) for Gmail access (~5 minutes) and optional provider
+tokens.
 
-## How it works (v1)
+## Use
 
-1. **Connect** — GIS issues a read-only Gmail access token in the browser.
-2. **Fetch** — `messages.list` + metadata `get` (From/Subject/Date) directly over
-   CORS. No bodies, nothing to our servers.
-3. **Parse** — a service-signature dictionary (`lib/services.ts`) + subject rules
-   classify each email and dedupe into services with tier + dormancy.
-4. **View** — a dashboard (counts, "needs attention", filters) and a footprint
-   graph (hub-and-spoke, colored by tier).
-5. **Persist** — results stored locally in IndexedDB; "Wipe" clears everything.
+```bash
+spend                 # report
+spend --all           # include personal-finance senders
+spend --json          # machine-readable; the dashboard reads this
+spend --digest        # push only time-critical alerts to Discord
+spend --label         # file billing mail under Money/* in Gmail
 
-## Roadmap
+npm run dev           # dashboard at /spend
+npm test              # parser tests
 
-- **v2** enrich detection (Claude classification of unknown senders via stateless
-  proxy; HIBP for the deleted-email tail; trial-date extraction).
-- **v3** alerts (thin cloud layer stores only `{contact, service, date}`).
-- **v4** credits — read-only connectors for OpenAI/AWS/GCP/Azure ("$100 leftover").
-- **v5** universal paid-subscription detection via Plaid (opt-in, hybrid).
-
-## Project layout
-
+bin/keys.mjs add <id> <provider> --free-limit 25   # secret read from stdin
+bin/keys.mjs list                                  # metadata only
+bin/keys.mjs reveal <id>                           # terminal only, never rendered
 ```
-app/            landing (/) and scanner (/app)
-components/     Dashboard, FootprintGraph, StatTile, TierBadge
-lib/            config, google-auth, gmail, services (dictionary),
-                parser, db (Dexie), scan (orchestrator), tiers, types
-```
+
+## Design decisions worth knowing
+
+**Payment processors are not merchants.** A receipt from an `acct_*` Stripe
+address tells you Stripe moved the money, not who took it. Processor mail is
+attributed by subject line. Without this, every Stripe receipt files under
+"Stripe".
+
+**One payment can be two emails.** A merchant running an invoicing system in
+front of a processor bills once and mails twice. Same service, same amount, same
+day collapses to one charge. A genuine repeat on a different day still reports.
+
+**Cancellations suppress trial alerts.** This caught a live false positive: a
+trial flagged as converting to $29.99/mo had already been cancelled, and the
+only evidence anywhere was prose in a founder's win-back email.
+
+**The ledger outlives the inbox.** Events are keyed by message id and kept
+permanently. Delete the email afterwards and the history survives, flagged as no
+longer present in the mailbox. Billing mail is exactly the mail people delete.
+
+**Alerts are gated by whether you can still act.** A charge that already
+happened goes on the dashboard. A balance three days from zero interrupts you.
+
+## Secrets
+
+- API keys live in the **macOS Keychain**. `~/.devspend/keys.json` holds only
+  provider, last four characters, and your free-tier note.
+- One function returns a secret, so the blast radius is a single greppable call
+  site. The dashboard has no code path to one.
+- `bin/keys.mjs add` reads from stdin, never argv, so keys stay out of shell
+  history and out of `ps`.
+- All state lives in `~/.devspend/`, outside the repo. Nothing to commit by
+  accident.
+
+## What it cannot do
+
+Stated plainly, because these are limits and not missing features:
+
+- **Claude Pro/Max and ChatGPT/Codex subscriptions have no billing API.** Receipt
+  email is the only source for the amount and renewal date.
+- **Anthropic's cost API is organization-only.** The docs are explicit: *"The
+  Admin API is unavailable for individual accounts."*
+- **The 5-hour rolling limit is not exposed anywhere.** Token usage is read from
+  local logs; the limit itself is server-side state with no endpoint.
+- **Mail permanently deleted before any scan is unrecoverable.** Run it on a
+  schedule so the ledger captures things first.
+- **Per-key spend is only reported where a provider supports it.** Elsewhere it
+  reads `not reported` rather than a misleading `$0.00`.
+
+## License
+
+MIT
