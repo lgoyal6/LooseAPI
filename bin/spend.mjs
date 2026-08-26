@@ -16,12 +16,15 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { SERVICES } from "../lib/spend/services.mjs";
 import { extractEvents, findAnomalies, monthlyTotal, fmt } from "../lib/spend/costs.mjs";
-import { fetchMessages, loadConfig } from "../lib/spend/gmail.mjs";
+import { fetchMessages, loadConfig, applyLabels } from "../lib/spend/gmail.mjs";
 import { pollProviders, NO_API } from "../lib/spend/providers.mjs";
+import { send as discordSend, pushable } from "../lib/spend/notify.mjs";
+import { allUsage, tokens } from "../lib/spend/usage.mjs";
 
 const DIR = join(homedir(), ".devspend");
 const STATE = join(DIR, "state.json");
 const SNAPSHOT = join(DIR, "snapshot.json");
+const LEDGER = join(DIR, "ledger.json");
 
 const argv = process.argv.slice(2);
 const has = (f) => argv.includes(f);
@@ -42,19 +45,6 @@ function alertKey(a) {
   return `${a.kind}:${a.service}:${(a.evidence || []).join(",")}`;
 }
 
-async function postDiscord(lines) {
-  // Reuse the webhook/DM channel the other automations already use.
-  const cfg = await loadConfig();
-  const url = cfg.discordWebhook || process.env.DEVSPEND_DISCORD_WEBHOOK;
-  if (!url) return { sent: false, reason: "no discordWebhook configured" };
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ content: lines.join("\n").slice(0, 1900) }),
-  });
-  return { sent: res.ok, reason: res.ok ? "ok" : `HTTP ${res.status}` };
-}
-
 async function main() {
   await mkdir(DIR, { recursive: true });
 
@@ -68,26 +58,51 @@ async function main() {
 
   const config = await loadConfig();
   const { messages, source } = await fetchMessages({ days: 120 });
-  const all = extractEvents(messages, SERVICES);
+
+  // Cumulative ledger. A rebuilt-from-current-mail snapshot silently loses
+  // history the moment a message is deleted — and billing mail is exactly the
+  // mail people delete. Once an event is seen it is kept, keyed by message id,
+  // so the record outlives the inbox it came from.
+  const ledger = await readJson(LEDGER, { events: {} });
+  const scanned = extractEvents(messages, SERVICES);
+  for (const e of scanned) {
+    ledger.events[e.id] = { ...(ledger.events[e.id] || {}), ...e, firstSeen: ledger.events[e.id]?.firstSeen ?? new Date().toISOString() };
+  }
+  ledger.updatedAt = new Date().toISOString();
+  await writeFile(LEDGER, JSON.stringify(ledger, null, 2));
+
+  const scannedIds = new Set(scanned.map((e) => e.id));
+  const all = Object.values(ledger.events)
+    // Flag anything the ledger remembers that the mailbox no longer returns.
+    .map((e) => ({ ...e, missingFromMailbox: !scannedIds.has(e.id) }))
+    .sort((a, b) => new Date(b.date) - new Date(a.date));
 
   // Default view is dev spend. Personal-finance and unclassified senders are
   // kept in the snapshot but hidden unless asked for, so a noisy inbox doesn't
   // bury the thing you opened this for.
-  const events = has("--all") ? all : all.filter((e) => e.scope === "dev");
+  // Dev tools and consumer subscriptions are both "recurring expenditure";
+  // only bank, utility and insurance mail is out of scope by default.
+  const events = has("--all")
+    ? all
+    : all.filter((e) => e.scope === "dev" || e.scope === "consumer");
   const hidden = all.length - events.length;
   const alerts = findAnomalies(events);
   const providers = await pollProviders(config);
+  const usage = await allUsage({ days: 30 });
   const monthly = monthlyTotal(events);
 
   const snapshot = {
     generatedAt: new Date().toISOString(),
     source,
     messageCount: messages.length,
+    ledgerSize: Object.keys(ledger.events).length,
+    recoveredFromLedger: all.filter((e) => e.missingFromMailbox).length,
     hiddenOutOfScope: hidden,
     monthlyCents: monthly,
     events,
     alerts,
     providers,
+    usage,
     noApi: NO_API,
   };
   await writeFile(SNAPSHOT, JSON.stringify(snapshot, null, 2));
@@ -97,19 +112,35 @@ async function main() {
   const seen = new Set(state.seen);
   const fresh = alerts.filter((a) => !seen.has(alertKey(a)));
 
+  if (has("--label")) {
+    const r = await applyLabels(all);
+    console.log(
+      r.reason
+        ? `labelling skipped: ${r.reason}`
+        : `labelled ${r.labelled} message(s), skipped ${r.skipped}`,
+    );
+  }
+
   if (has("--json")) {
     console.log(JSON.stringify({ ...snapshot, freshAlerts: fresh }, null, 2));
   } else if (has("--digest")) {
-    if (fresh.length === 0) {
-      console.log("no new alerts");
+    // Only alerts that are both new AND still actionable get pushed; the rest
+    // stay on the dashboard.
+    const worth = pushable(fresh);
+    if (worth.length === 0) {
+      console.log(
+        fresh.length
+          ? `${fresh.length} new alert(s), none time-critical — left for the dashboard`
+          : "no new alerts",
+      );
     } else {
       const lines = [
-        `**devspend** ${fresh.length} new alert${fresh.length === 1 ? "" : "s"}`,
-        ...fresh.map((a) => `${a.severity >= 3 ? "🔴" : "🟠"} ${a.message}`),
+        `**spend** ${worth.length} alert${worth.length === 1 ? "" : "s"}`,
+        ...worth.map((a) => `${a.severity >= 3 ? "🔴" : "🟠"} ${a.message}`),
         `_monthly recurring: ${fmt(monthly)}_`,
       ];
-      const r = await postDiscord(lines);
-      console.log(r.sent ? `posted ${fresh.length} alert(s)` : `not posted: ${r.reason}`);
+      const r = await discordSend(lines.join("\n"));
+      console.log(r.sent ? `posted ${worth.length} alert(s)` : `not posted: ${r.reason}`);
       if (!r.sent) for (const l of lines) console.log("  " + l);
     }
   } else {
@@ -125,6 +156,8 @@ async function main() {
 function render(s, fresh) {
   const w = (str, n) => String(str).padEnd(n);
   console.log(`\ndevspend  ${s.generatedAt.slice(0, 16).replace("T", " ")}  (source: ${s.source}, ${s.messageCount} messages scanned${s.hiddenOutOfScope ? `, ${s.hiddenOutOfScope} out of scope` : ""})\n`);
+  if (s.recoveredFromLedger)
+    console.log(`  ${s.recoveredFromLedger} event(s) retained from the ledger but no longer in the mailbox\n`);
 
   console.log(`MONTHLY RECURRING   ${fmt(s.monthlyCents)}`);
 
@@ -168,6 +201,18 @@ function render(s, fresh) {
           ? `error: ${p.error}`
           : `skipped — ${p.note}`;
     console.log(`  ${w(p.name, 24)}${detail}`);
+  }
+
+  if (s.usage) {
+    console.log(`\nCODING AGENT USAGE (last ${s.usage.days} days, local session logs)`);
+    for (const t of s.usage.tools) {
+      if (!t.total.messages) continue;
+      console.log(
+        `  ${w(t.tool, 16)}${w(tokens(t.total.input + t.total.output + t.total.cacheRead), 12)}` +
+          `equiv API cost ${fmt(t.total.cents)}`,
+      );
+    }
+    console.log(`  (subscriptions do not bill per token — "equivalent" is what the API would charge)`);
   }
 
   console.log(`\nNO API AVAILABLE (receipt email is the only source)`);
