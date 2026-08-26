@@ -121,3 +121,4 @@
 
 /* Wide content scrolls inside itself; the page never scrolls sideways. */
 section { overflow-x: auto; }
+.note { font-size: 0.78rem; margin-top: 0.5rem; }

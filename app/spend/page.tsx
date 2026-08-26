@@ -8,6 +8,8 @@ import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { Burndown, type BurndownPoint } from "./burndown";
+import { listKeys } from "../../lib/spend/keys.mjs";
+import { tokens } from "../../lib/spend/usage.mjs";
 import "./spend.css";
 
 interface SpendEvent {
@@ -43,6 +45,7 @@ interface Snapshot {
   events: SpendEvent[];
   alerts: Alert[];
   providers: { id: string; name: string; status: string; cents?: number; note?: string; error?: string }[];
+  usage?: { days: number; tools: any[] };
   noApi: { name: string; reason: string }[];
 }
 
@@ -96,6 +99,9 @@ export default async function SpendPage() {
   await connection(); // snapshot changes between requests; render per request
 
   const snap = await loadSnapshot();
+  // Metadata only. There is deliberately no code path from this page to a
+  // secret — revealing one is a terminal command, not a render.
+  const keys = await listKeys().catch(() => []);
 
   if (!snap) {
     return (
@@ -239,6 +245,85 @@ export default async function SpendPage() {
             ))}
           </ul>
         </div>
+      </section>
+
+      {snap.usage && (
+        <section>
+          <h2>Coding agent usage · last {snap.usage.days} days</h2>
+          <table className="grid">
+            <thead>
+              <tr>
+                <th>Tool</th>
+                <th className="num">Sessions</th>
+                <th className="num">Input</th>
+                <th className="num">Output</th>
+                <th className="num">Cache read</th>
+                <th className="num">Equivalent API cost</th>
+              </tr>
+            </thead>
+            <tbody>
+              {snap.usage.tools
+                .filter((t: any) => t.total.messages > 0)
+                .map((t: any) => (
+                  <tr key={t.tool}>
+                    <td>{t.tool}</td>
+                    <td className="num">{t.files}</td>
+                    <td className="num">{tokens(t.total.input)}</td>
+                    <td className="num">{tokens(t.total.output)}</td>
+                    <td className="num">{tokens(t.total.cacheRead)}</td>
+                    <td className="num">{fmt(t.total.cents)}</td>
+                  </tr>
+                ))}
+            </tbody>
+          </table>
+          <p className="muted note">
+            Read from local session logs. Flat subscriptions do not bill per token, so
+            this is what the same work would have cost through the API — not spend.
+            The 5-hour rolling limit is server-side and is not exposed anywhere.
+          </p>
+        </section>
+      )}
+
+      <section>
+        <h2>API keys</h2>
+        {keys.length === 0 ? (
+          <p className="muted">
+            None registered. <code>bin/keys.mjs add &lt;id&gt; &lt;provider&gt;</code>
+          </p>
+        ) : (
+          <>
+            <table className="grid">
+              <thead>
+                <tr>
+                  <th>Provider</th>
+                  <th>Key</th>
+                  <th className="num">Free limit</th>
+                  <th className="num">Spent</th>
+                  <th>Stored</th>
+                  <th>Note</th>
+                </tr>
+              </thead>
+              <tbody>
+                {keys.map((k: any) => (
+                  <tr key={k.id}>
+                    <td>{k.provider}</td>
+                    <td className="muted">…{k.last4}</td>
+                    <td className="num">{fmt(k.freeLimitCents)}</td>
+                    <td className="num muted">
+                      {k.spentCents == null ? "not reported" : fmt(k.spentCents)}
+                    </td>
+                    <td className="muted">{k.inKeychain ? "Keychain" : "MISSING"}</td>
+                    <td className="muted">{k.note || "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <p className="muted note">
+              Secrets live in the macOS Keychain. This page renders metadata only —
+              use <code>bin/keys.mjs reveal &lt;id&gt;</code> to read one.
+            </p>
+          </>
+        )}
       </section>
 
       <section>
