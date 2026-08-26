@@ -1,0 +1,123 @@
+/*
+ * Both themes are selected, not flipped: the dark column is its own step of the
+ * same hues, checked against the dark surface. Every color has its definition on
+ * bare :root so nothing depends on a media query being matched.
+ */
+.spend {
+  --surface-0: #ffffff;
+  --surface-1: #fcfcfb;
+  --surface-2: #f4f4f1;
+  --border: #e3e2dd;
+  --text-primary: #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted: #85847e;
+  --series-1: #2a78d6;
+  --critical: #d03b3b;
+  --warning: #fab219;
+  --good: #0ca30c;
+
+  color-scheme: light;
+  background: var(--surface-0);
+  color: var(--text-primary);
+  max-width: 68rem;
+  margin: 0 auto;
+  padding: 2rem 1.5rem 4rem;
+  font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .spend {
+    --surface-0: #121211;
+    --surface-1: #1a1a19;
+    --surface-2: #232322;
+    --border: #34342f;
+    --text-primary: #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted: #8f8e85;
+    --series-1: #3987e5;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] .spend {
+  --surface-0: #121211;
+  --surface-1: #1a1a19;
+  --surface-2: #232322;
+  --border: #34342f;
+  --text-primary: #ffffff;
+  --text-secondary: #c3c2b7;
+  --text-muted: #8f8e85;
+  --series-1: #3987e5;
+  color-scheme: dark;
+}
+
+.spend h1 { font-size: 1.6rem; margin: 0; letter-spacing: -0.01em; }
+.spend h2 { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.07em;
+            color: var(--text-secondary); margin: 2rem 0 0.65rem; font-weight: 600; }
+.head { margin-bottom: 1.5rem; }
+.meta { color: var(--text-muted); font-size: 0.82rem; margin: 0.3rem 0 0; }
+.empty { color: var(--text-secondary); }
+.muted { color: var(--text-muted); }
+
+/* Hero numbers */
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr)); gap: 0.75rem; }
+.tile { background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px;
+        padding: 0.9rem 1rem; display: flex; flex-direction: column; gap: 0.3rem; }
+.tile-label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em;
+              color: var(--text-muted); }
+.tile-value { font-size: 1.85rem; font-weight: 600; letter-spacing: -0.02em;
+              font-variant-numeric: tabular-nums; }
+/* Status tint on the number is redundant with the label beside it, never the only cue. */
+.tile-value.is-critical { color: var(--critical); }
+.tile-value.is-warning  { color: var(--warning); }
+
+/* Alerts — icon + word + message, so color is never load-bearing */
+.alerts { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.4rem; }
+.alert { display: grid; grid-template-columns: 1.1rem 4.2rem 1fr; align-items: baseline; gap: 0.6rem;
+         background: var(--surface-1); border: 1px solid var(--border);
+         border-left-width: 3px; border-radius: 8px; padding: 0.6rem 0.85rem; }
+.alert.critical { border-left-color: var(--critical); }
+.alert.warning  { border-left-color: var(--warning); }
+.alert-icon  { font-size: 0.7rem; }
+.alert.critical .alert-icon, .alert.critical .alert-word { color: var(--critical); }
+.alert.warning  .alert-icon, .alert.warning  .alert-word { color: var(--warning); }
+.alert-word  { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 700; }
+.alert-msg   { color: var(--text-primary); }
+
+/* Chart */
+.card { background: var(--surface-1); border: 1px solid var(--border);
+        border-radius: 10px; padding: 1rem 1.15rem 0.6rem; }
+.card-title { font-size: 0.9rem; font-weight: 600; display: flex; flex-wrap: wrap;
+              gap: 0.5rem; align-items: baseline; margin-bottom: 0.4rem; }
+.card-sub { font-weight: 400; font-size: 0.78rem; color: var(--text-muted); }
+.axis   { stroke: var(--border); stroke-width: 1; }
+.series { stroke: var(--series-1); stroke-width: 2; fill: none;
+          stroke-linecap: round; stroke-linejoin: round; }
+.series.projection { stroke-dasharray: 5 4; opacity: 0.75; }
+.marker { fill: var(--series-1); stroke: var(--surface-1); stroke-width: 2; }
+.marker.zero { fill: var(--surface-1); stroke: var(--series-1); }
+/* Values wear text tokens, not the series color. */
+.label { fill: var(--text-primary); font-size: 11px; font-weight: 600;
+         font-variant-numeric: tabular-nums; }
+.label.mid { text-anchor: middle; }
+.tick  { fill: var(--text-muted); font-size: 10px; }
+.tick.end { text-anchor: middle; }
+
+.table-view { margin-top: 0.5rem; font-size: 0.82rem; color: var(--text-secondary); }
+.table-view summary { cursor: pointer; padding: 0.35rem 0; }
+.table-view table { margin-top: 0.4rem; }
+
+/* Tables */
+.grid, .table-view table { width: 100%; border-collapse: collapse; font-size: 0.87rem; }
+.grid th, .table-view th { text-align: left; font-weight: 600; font-size: 0.72rem;
+       text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted);
+       padding: 0.4rem 0.6rem; border-bottom: 1px solid var(--border); }
+.grid td, .table-view td { padding: 0.45rem 0.6rem; border-bottom: 1px solid var(--border);
+       font-variant-numeric: tabular-nums; }
+.grid .num, .grid th.num { text-align: right; }
+
+.plain { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.35rem;
+         font-size: 0.87rem; }
+.two-up { display: grid; grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr)); gap: 1.5rem; }
+
+/* Wide content scrolls inside itself; the page never scrolls sideways. */
+section { overflow-x: auto; }
