@@ -7,6 +7,7 @@
  *   spend --digest        post new alerts to Discord, then exit
  *   spend --import FILE   load a messages dump into ~/.devspend/messages.json
  *   spend --ingest PATH   add forwarded mail: an .eml, an mbox, or a directory
+ *   spend --agents        what the coding agents cost, by project and model
  *
  * Alerting is state-diffed: only alerts not seen on a previous run are pushed,
  * matching how `amac health` behaves. That keeps a daily schedule quiet until
@@ -17,6 +18,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { SERVICES } from "../lib/spend/services.mjs";
 import { extractEvents, findAnomalies, monthlyTotal, fmt } from "../lib/spend/costs.mjs";
+import { report, usd } from "../lib/spend/agents.mjs";
 import { fetchMessages, loadConfig, applyLabels } from "../lib/spend/gmail.mjs";
 import { pollProviders, NO_API } from "../lib/spend/providers.mjs";
 import { send as discordSend, pushable } from "../lib/spend/notify.mjs";
@@ -128,6 +130,11 @@ async function main() {
         ? `labelling skipped: ${r.reason}`
         : `labelled ${r.labelled} message(s), skipped ${r.skipped}`,
     );
+  }
+
+  if (has("--agents")) {
+    printAgents(snapshot.usage);
+    return;
   }
 
   if (has("--json")) {
@@ -280,4 +287,37 @@ async function ingestForwarded(src) {
   await mkdir(DIR, { recursive: true });
   await writeFile(MESSAGES, JSON.stringify(merged, null, 2));
   return added;
+}
+
+/** The agent report, for a terminal. */
+function printAgents(usage) {
+  const r = report(usage);
+  const line = (l, v) => console.log(`  ${l.padEnd(26)}${v}`);
+
+  console.log(`\nCODING AGENTS, LAST ${r.days} DAYS\n`);
+  line("equivalent API cost", usd(r.totalCents));
+  line(`per active day (${r.activeDays})`, usd(r.perActiveDayCents));
+  line(`today (${r.today ?? "n/a"})`, usd(r.todayCents));
+  line("assistant messages", r.messages.toLocaleString());
+
+  if (r.trend) {
+    const dir = r.trend.pct >= 0 ? "up" : "down";
+    line(`last ${r.trend.window}d vs prior ${r.trend.window}d`,
+      `${usd(r.trend.now)} vs ${usd(r.trend.before)}, ${dir} ${Math.abs(r.trend.pct)}%`);
+  }
+
+  const table = (title, rows) => {
+    if (!rows.length) return;
+    console.log(`\n  ${title}`);
+    const width = Math.max(...rows.map((x) => x.name.length));
+    for (const x of rows) {
+      const share = r.totalCents ? Math.round((x.cents / r.totalCents) * 100) : 0;
+      console.log(`    ${x.name.padEnd(Math.min(width, 38))}  ${usd(x.cents).padStart(9)}  ${String(share).padStart(3)}%`);
+    }
+  };
+  table("by tool", r.byTool);
+  table("by project", r.byProject);
+  table("by model", r.byModel);
+
+  console.log(`\n  ${r.caveat}\n`);
 }

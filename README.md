@@ -86,6 +86,41 @@ repeatedly and report a duplicate that never happened. Re-ingesting a directory
 is therefore free, which matters because the obvious way to run this is a cron
 over a maildir that never empties.
 
+## What the coding agents cost
+
+The one question here that has nothing to do with email, and the one nobody
+else can answer. Claude Code and Codex both write session logs to disk; the
+numbers are already there and no API exposes them.
+
+```
+$ spend --agents
+
+CODING AGENTS, LAST 30 DAYS
+
+  equivalent API cost       $19,781
+  per active day (34)       $582
+  last 7d vs prior 7d       $8,076 vs $3,231, up 150%
+
+  by project
+    (home)                      $5,841   30%
+    intern-ai-projects          $1,770    9%
+  by model
+    claude-opus-5              $14,173   72%
+```
+
+Per *active* day, not per calendar day: dividing a month of cost by thirty when
+eleven of them were weekends understates the rate on a working day, which is the
+rate anyone is deciding against. A window with nothing before it reports no
+trend rather than an infinite increase.
+
+**Equivalent API cost, not spend**, everywhere it appears. On a flat
+subscription these tokens cost nothing marginal; the number is what the same
+work would have cost through the API. That is the right number for deciding
+whether a subscription is worth keeping, for comparing one project against
+another, and for noticing a model choice that got expensive. It is the wrong
+number to put in a budget, and calling it spend would be an overstatement
+nobody downstream could detect.
+
 ## Install
 
 macOS, Node 20+, no dependencies.
