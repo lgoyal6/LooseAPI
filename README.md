@@ -47,6 +47,45 @@ Three sources could tell you what you spend, and only one sees credits:
 A burning-down credit balance produces **zero** bank transactions. That is the
 gap this fills.
 
+## Two ways in, and only one of them needs Google's permission
+
+Reading a mailbox needs `gmail.readonly`, which Google classifies as a
+restricted scope: an annual CASA security assessment, quoted from a few thousand
+dollars to tens of thousands, and six to twelve weeks for a first cycle. That is
+a wall for anyone who is not already a company, and it gates the only useful
+version of this for anyone but its author.
+
+A forwarding address needs none of it.
+
+```bash
+# one Gmail filter: from:(amazonaws.com OR vercel.com OR ...) -> Forward to
+spend --ingest ~/mail/forwarded/     # an .eml, an mbox, or a directory
+```
+
+Nothing here touches the mailbox, so there is no scope to be assessed and a
+better answer to the first question anyone asks, which is what else you can see.
+
+**Ask for a filter forward, not the Forward button.** Gmail's filter relays the
+original message, so `From` is still AWS. The Forward button sends a *new*
+message from you with the original quoted underneath, and taken at face value
+every service resolves to gmail.com and the whole thing silently produces
+nothing. People do this at least once, so the banner is parsed and the original
+sender, subject and date are recovered from it.
+
+**What forwarding cannot carry is labels.** The strongest signal in the mailbox
+version is that a billing warning arrived and was never read, which is how the
+founding AWS case was caught. Forwarding happens at delivery, so nothing
+downstream can know what became of the copy left behind. Those messages carry
+`labelIds: null` rather than `[]`, because `(labelIds || [])` answers "read" to
+a question nobody can answer, and the unread alert tests for true so unknown
+skips it instead of being reported as seen.
+
+Ids are a hash of the message id, stable across re-ingestion. The ledger is
+keyed on them, and an id that changed per run would file the same charge
+repeatedly and report a duplicate that never happened. Re-ingesting a directory
+is therefore free, which matters because the obvious way to run this is a cron
+over a maildir that never empties.
+
 ## Install
 
 macOS, Node 20+, no dependencies.
