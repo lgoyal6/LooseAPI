@@ -75,8 +75,43 @@ for (const a of alerts) console.log(`  [sev ${a.severity}] ${a.kind}: ${a.messag
 const repeat = alerts.find((a) => a.kind === "repeat_charge");
 check("duplicate Exa charge detected", repeat?.service, "Exa Labs");
 
-const burn = alerts.find((a) => a.kind === "credit_burndown");
-check("AWS burndown detected", burn?.service, "Amazon Web Services");
+// The AWS fixture is the founding case: two credit readings, then a closure
+// three days later. This assertion used to be "a burndown alert exists", which
+// the code satisfied by never checking how old the readings were. It kept
+// saying "~1.3 days" every day for the nine days after the account had already
+// closed, and the test kept passing, because a projection that ignores its own
+// as-of date passes forever.
+check(
+  "closed account produces no live countdown",
+  alerts.find((a) => a.kind === "credit_burndown" && a.service === "Amazon Web Services"),
+  undefined,
+);
+
+// The projection itself still has to work, so it is exercised on readings that
+// have not aged out. Dates are relative to now: a fixture with dates baked in
+// is exactly what let the original assertion rot.
+const daysAgo = (n) => new Date(Date.now() - n * 86400000).toISOString();
+const burnEvents = [
+  { id: "c1", serviceId: "demo", service: "Demo", date: daysAgo(2), kind: "credits_low", creditsRemainingCents: 4000 },
+  { id: "c2", serviceId: "demo", service: "Demo", date: daysAgo(1), kind: "credits_low", creditsRemainingCents: 3000 },
+];
+const live = findAnomalies(burnEvents).find((a) => a.kind === "credit_burndown");
+check("fresh readings still project", live?.service, "Demo");
+// $30 left at $10/day, read a day ago: two days from now, not three.
+check("runway counts from now, not from the reading", live?.message.includes("~2.0 days"), true);
+check("a runway inside three days is urgent", live?.severity, 3);
+
+// Same numbers, read long enough ago that the runway is spent, and no closure
+// mail to explain what happened. That is a gap in the record, not a countdown.
+const staleEvents = [
+  { id: "s1", serviceId: "demo", service: "Demo", date: daysAgo(31), kind: "credits_low", creditsRemainingCents: 4000 },
+  { id: "s2", serviceId: "demo", service: "Demo", date: daysAgo(30), kind: "credits_low", creditsRemainingCents: 3000 },
+];
+const stale = findAnomalies(staleEvents);
+check("expired projection is not reported as a countdown",
+  stale.find((a) => a.kind === "credit_burndown"), undefined);
+check("expired projection is reported as a gap",
+  stale.find((a) => a.kind === "credit_stale")?.service, "Demo");
 
 console.log("\n=== TOTALS ===");
 console.log(`  monthly recurring (35d): ${fmt(monthlyTotal(events))}`);
