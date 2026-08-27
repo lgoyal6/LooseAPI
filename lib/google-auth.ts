@@ -75,9 +75,3 @@ export async function connectGoogle(opts?: { silent?: boolean }): Promise<Access
   });
 }
 
-/** Revoke a token (best-effort) when the user disconnects. */
-export function revokeGoogle(token: string): void {
-  if (typeof window !== "undefined" && window.google?.accounts?.oauth2) {
-    window.google.accounts.oauth2.revoke(token);
-  }
-}

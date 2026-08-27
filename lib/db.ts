@@ -52,10 +52,6 @@ export async function loadServices(emailAddress: string): Promise<DetectedServic
   return db.services.where("emailAddress").equals(emailAddress).toArray();
 }
 
-export async function lastScan(emailAddress: string): Promise<ScanMeta | undefined> {
-  return db.scans.get(emailAddress);
-}
-
 /** Most recently scanned inbox, if any (to auto-restore on load). */
 export async function mostRecentScan(): Promise<ScanMeta | undefined> {
   const all = await db.scans.toArray();
