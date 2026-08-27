@@ -6,6 +6,7 @@
  *   spend --json          machine-readable (this is what the dashboard reads)
  *   spend --digest        post new alerts to Discord, then exit
  *   spend --import FILE   load a messages dump into ~/.devspend/messages.json
+ *   spend --ingest PATH   add forwarded mail: an .eml, an mbox, or a directory
  *
  * Alerting is state-diffed: only alerts not seen on a previous run are pushed,
  * matching how `amac health` behaves. That keeps a daily schedule quiet until
@@ -25,6 +26,7 @@ const DIR = join(homedir(), ".devspend");
 const STATE = join(DIR, "state.json");
 const SNAPSHOT = join(DIR, "snapshot.json");
 const LEDGER = join(DIR, "ledger.json");
+const MESSAGES = join(DIR, "messages.json");
 
 const argv = process.argv.slice(2);
 const has = (f) => argv.includes(f);
@@ -48,11 +50,18 @@ function alertKey(a) {
 async function main() {
   await mkdir(DIR, { recursive: true });
 
+  if (has("--ingest")) {
+    const src = valueOf("--ingest");
+    if (!src) throw new Error("--ingest needs a file or directory");
+    const added = await ingestForwarded(src);
+    console.log(`ingested ${added} message(s) from ${src}`);
+  }
+
   if (has("--import")) {
     const src = valueOf("--import");
     if (!src) throw new Error("--import needs a file path");
-    await copyFile(src, join(DIR, "messages.json"));
-    console.log(`imported ${src} -> ${join(DIR, "messages.json")}`);
+    await copyFile(src, MESSAGES);
+    console.log(`imported ${src} -> ${MESSAGES}`);
     return;
   }
 
@@ -224,3 +233,51 @@ main().catch((err) => {
   console.error(`devspend: ${err.message}`);
   process.exit(1);
 });
+
+/**
+ * Ingest mail that arrived by forwarding.
+ *
+ * Merged into the same messages.json the mailbox scan writes, keyed by id, so a
+ * mailbox and a forwarding address can both feed the same ledger and a message
+ * that arrives twice is one message. Re-ingesting the same file is therefore
+ * free, which matters because the obvious way to run this is a cron over a
+ * maildir that never empties.
+ */
+async function ingestForwarded(src) {
+  const { parseAll } = await import("../lib/mail/inbound.mjs");
+  const { readdir, stat } = await import("node:fs/promises");
+
+  const files = [];
+  if ((await stat(src)).isDirectory()) {
+    for (const name of await readdir(src)) {
+      if (/\.(eml|mbox|txt)$/i.test(name) || !name.includes(".")) {
+        files.push(join(src, name));
+      }
+    }
+  } else {
+    files.push(src);
+  }
+
+  const incoming = [];
+  for (const f of files) {
+    try {
+      incoming.push(...parseAll(await readFile(f, "utf8")));
+    } catch {
+      // One unreadable file must not lose the rest of the batch.
+    }
+  }
+
+  const existing = await readJson(MESSAGES, []);
+  const byId = new Map(existing.map((m) => [m.id, m]));
+  let added = 0;
+  for (const m of incoming) {
+    if (byId.has(m.id)) continue;
+    byId.set(m.id, m);
+    added++;
+  }
+
+  const merged = [...byId.values()].sort((a, b) => String(b.date).localeCompare(String(a.date)));
+  await mkdir(DIR, { recursive: true });
+  await writeFile(MESSAGES, JSON.stringify(merged, null, 2));
+  return added;
+}
