@@ -316,6 +316,7 @@ function printAgents(usage) {
     }
   };
   table("by tool", r.byTool);
+  table("by account", r.byAccount);
   table("by project", r.byProject);
   table("by model", r.byModel);
 

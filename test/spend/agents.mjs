@@ -20,6 +20,7 @@ const usage = {
       byDay: { "2026-08-01": day(1000), "2026-08-02": day(1000), "2026-08-03": day(1000) },
       byProject: { amac: day(2000), looseapi: day(1000) },
       byModel: { "claude-opus-5": day(3000) },
+      byAccount: { "claude-gmi": day(3000) },
     },
     {
       tool: "Codex",
@@ -27,6 +28,7 @@ const usage = {
       byDay: { "2026-08-03": day(1000) },
       byProject: { amac: day(1000) },
       byModel: { "gpt-5": day(1000) },
+      byAccount: { codex: day(600), "codex-ish": day(400) },
     },
   ],
 };
@@ -41,6 +43,10 @@ check("tools rank by cost", r.byTool.map((t) => t.name), ["Claude Code", "Codex"
 // other: amac is 2000 from Claude and 1000 from Codex.
 check("projects merge across tools", r.byProject[0], { name: "amac", cents: 3000, messages: 2, input: 20, output: 10 });
 check("models stay separate", r.byModel.map((m) => m.name), ["claude-opus-5", "gpt-5"]);
+
+// Every account appears, smallest included. A `top` cut-off here would hide
+// the account nobody is watching, which is the one worth surfacing.
+check("accounts rank by cost, none dropped", r.byAccount.map((a) => a.name), ["claude-gmi", "codex", "codex-ish"]);
 
 // Today is the newest day present, and both tools' spend on it counts.
 check("today is the newest day", r.today, "2026-08-03");
