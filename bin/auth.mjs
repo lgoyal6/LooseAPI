@@ -35,9 +35,19 @@ const SCOPES = [
 const DIR = join(homedir(), ".devspend");
 const CONFIG = join(DIR, "config.json");
 
-const [clientId, clientSecret] = process.argv.slice(2);
+async function readStdin() {
+  if (process.stdin.isTTY) return "";
+  const chunks = [];
+  for await (const c of process.stdin) chunks.push(c);
+  return Buffer.concat(chunks).toString().trim();
+}
+
+const [clientId, argSecret] = process.argv.slice(2);
+// Prefer stdin: keeps the secret out of argv, so out of `ps` and shell history.
+const clientSecret = argSecret || (await readStdin());
+
 if (!clientId || !clientSecret) {
-  console.error(`usage: node bin/auth.mjs <client-id> <client-secret>
+  console.error(`usage:\n  pbpaste | node bin/auth.mjs <client-id>        secret from clipboard\n  node bin/auth.mjs <client-id> <client-secret>
 
 Get both from Google Cloud Console:
   1. console.cloud.google.com/projectcreate            new project
