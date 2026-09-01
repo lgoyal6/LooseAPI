@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "node test/spend/run.mjs && node test/spend/agents.mjs && node test/mail/inbound.mjs"
+    "test": "node test/spend/run.mjs && node test/spend/agents.mjs && node test/spend/usage.mjs && node test/mail/inbound.mjs"
   },
   "dependencies": {
     "dexie": "^4.4.4",
