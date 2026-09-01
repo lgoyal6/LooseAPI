@@ -32,7 +32,7 @@ The account closed 1.3 days later.
 | **Consumer subscriptions** | Netflix, Prime, Uber One, Spotify — no APIs exist, so email is the only source |
 | **Trials** | dated conversions, and cancellations that suppress them |
 | **API keys** | inventory with free-tier limits; secrets in the macOS Keychain, never on disk |
-| **Coding agents** | Claude Code and Codex token usage from local session logs |
+| **Coding agents** | Claude Code and Codex token usage, every local account, from session logs |
 
 ## Why email
 
@@ -101,12 +101,24 @@ CODING AGENTS, LAST 30 DAYS
   per active day (34)       $582
   last 7d vs prior 7d       $8,076 vs $3,231, up 150%
 
+  by account
+    claude                     $16,505   70%
+    codex                       $6,477   27%
+    codex-ish                     $532    2%
   by project
     (home)                      $5,841   30%
     intern-ai-projects          $1,770    9%
   by model
     claude-opus-5              $14,173   72%
 ```
+
+**Every account, not just the default one.** Both CLIs support more than one
+login by pointing `CODEX_HOME` or `CLAUDE_CONFIG_DIR` at a different home, and
+reading only `~/.codex` dropped a whole account's tokens out of every figure
+downstream with nothing about the output looking wrong. Homes are discovered by
+shape — the CLI's own directory plus any `-suffix` sibling that actually holds
+session logs — so a third account is picked up by existing rather than by
+someone remembering to edit a list.
 
 Per *active* day, not per calendar day: dividing a month of cost by thirty when
 eleven of them were weekends understates the rate on a working day, which is the
