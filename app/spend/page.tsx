@@ -69,6 +69,27 @@ async function loadSnapshot(): Promise<Snapshot | null> {
 }
 
 /** Balance readings per service, plus a linear projection to zero. */
+// One row per account per tool, ranked by cost.
+//
+// Not merged across tools, because a login belongs to exactly one of them:
+// "codex-ish" is a Codex account and cannot be anything else, so flattening
+// them into one column would only hide which tool a name refers to.
+type AccountTotals = { input?: number; output?: number; cents?: number };
+type UsageTool = { tool: string; byAccount?: Record<string, AccountTotals> };
+
+function accountRows(tools: UsageTool[]) {
+  const rows = tools.flatMap((t) =>
+    Object.entries(t.byAccount ?? {}).map(([account, v]) => ({
+      account,
+      tool: t.tool,
+      input: v.input ?? 0,
+      output: v.output ?? 0,
+      cents: v.cents ?? 0,
+    })),
+  );
+  return rows.sort((a, b) => b.cents - a.cents);
+}
+
 function burndowns(events: SpendEvent[]) {
   const byService = new Map<string, BurndownPoint[]>();
   for (const e of events) {
@@ -276,10 +297,36 @@ export default async function SpendPage() {
                 ))}
             </tbody>
           </table>
+          <h3>By account</h3>
+          <table className="grid">
+            <thead>
+              <tr>
+                <th>Account</th>
+                <th>Tool</th>
+                <th className="num">Input</th>
+                <th className="num">Output</th>
+                <th className="num">Equivalent API cost</th>
+              </tr>
+            </thead>
+            <tbody>
+              {accountRows(snap.usage.tools).map((a) => (
+                <tr key={`${a.tool}/${a.account}`}>
+                  <td>{a.account}</td>
+                  <td className="muted">{a.tool}</td>
+                  <td className="num">{tokens(a.input)}</td>
+                  <td className="num">{tokens(a.output)}</td>
+                  <td className="num">{fmt(a.cents)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
           <p className="muted note">
-            Read from local session logs. Flat subscriptions do not bill per token, so
-            this is what the same work would have cost through the API — not spend.
-            The 5-hour rolling limit is server-side and is not exposed anywhere.
+            Read from local session logs, every account of each tool rather than the
+            default home alone: reading only ~/.codex dropped a whole login out of
+            these figures with nothing about them looking wrong. Flat subscriptions do
+            not bill per token, so this is what the same work would have cost through
+            the API — not spend. The 5-hour rolling limit is server-side and is not
+            exposed anywhere.
           </p>
         </section>
       )}
