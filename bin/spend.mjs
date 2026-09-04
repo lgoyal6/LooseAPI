@@ -163,10 +163,17 @@ async function main() {
     render(snapshot, fresh);
   }
 
-  await writeFile(
-    STATE,
-    JSON.stringify({ seen: alerts.map(alertKey), lastRun: snapshot.generatedAt }, null, 2),
-  );
+  // Only the digest advances `seen`. That ledger is the digest's memory of what
+  // it has already said, so any other mode consuming it is a mode that silently
+  // silences tomorrow's alerts: a --json refresh on a schedule, or just running
+  // this to look at the dashboard, would mark everything read and the 09:15 run
+  // would then find nothing fresh and post nothing.
+  if (has("--digest")) {
+    await writeFile(
+      STATE,
+      JSON.stringify({ seen: alerts.map(alertKey), lastRun: snapshot.generatedAt }, null, 2),
+    );
+  }
 }
 
 function render(s, fresh) {
