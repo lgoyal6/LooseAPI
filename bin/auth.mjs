@@ -42,12 +42,39 @@ async function readStdin() {
   return Buffer.concat(chunks).toString().trim();
 }
 
-const [clientId, argSecret] = process.argv.slice(2);
-// Prefer stdin: keeps the secret out of argv, so out of `ps` and shell history.
-const clientSecret = argSecret || (await readStdin());
+const args = process.argv.slice(2).filter((a) => a !== "--dry-run");
+const dryRun = process.argv.includes("--dry-run");
+const [argId, argSecret] = args;
+
+// Re-authorising is the common case, not the first run: a refresh token for a
+// client left in Testing status expires after seven days, and the client id and
+// secret written here on the first run do not change. Reading them back means
+// re-auth is one argument-free command and the secret never passes through argv
+// or a clipboard again.
+const stored = await readFile(CONFIG, "utf8").then(JSON.parse).catch(() => ({}));
+const clientId = argId || stored.clientId || "";
+
+// Only consult stdin when a client id was passed, which is the first-run shape
+// (`pbpaste | node bin/auth.mjs <id>`). With no arguments this is a re-auth of
+// an already-configured client, and reading stdin there would block forever on
+// any terminal that leaves it open, such as a launchd job or an agent shell.
+let clientSecret = argSecret || "";
+if (!clientSecret && argId) clientSecret = await readStdin();
+if (!clientSecret) clientSecret = stored.clientSecret || "";
+
+if (clientId && clientSecret && !argId) {
+  console.error("using the client id and secret already in ~/.devspend/config.json");
+}
+
+if (dryRun) {
+  console.error(clientId && clientSecret
+    ? "dry run: credentials resolved, the real run would open the consent screen"
+    : "dry run: no credentials found");
+  process.exit(clientId && clientSecret ? 0 : 1);
+}
 
 if (!clientId || !clientSecret) {
-  console.error(`usage:\n  pbpaste | node bin/auth.mjs <client-id>        secret from clipboard\n  node bin/auth.mjs <client-id> <client-secret>
+  console.error(`usage:\n  node bin/auth.mjs                              reuse the stored client id and secret\n  pbpaste | node bin/auth.mjs <client-id>        secret from clipboard\n  node bin/auth.mjs <client-id> <client-secret>
 
 Get both from Google Cloud Console:
   1. console.cloud.google.com/projectcreate            new project
