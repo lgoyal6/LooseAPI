@@ -56,6 +56,7 @@ async function fetchInbox(auth) {
 
   // Metadata only — From/Subject/Date. Bodies are never fetched.
   const out = [];
+  const dropped = [];
   const CONCURRENCY = 12;
   for (let i = 0; i < ids.length; i += CONCURRENCY) {
     const batch = ids.slice(i, i + CONCURRENCY);
@@ -64,8 +65,15 @@ async function fetchInbox(auth) {
         const url = new URL(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}`);
         url.searchParams.set("format", "metadata");
         for (const h of ["From", "Subject", "Date"]) url.searchParams.append("metadataHeaders", h);
-        const r = await fetch(url, { headers: auth });
-        if (!r.ok) return null;
+        const r = await getWithBackoff(url, auth);
+        // A dropped message is not a message that does not exist. Returning
+        // null here quietly shrank the sweep: a run that half failed looked
+        // like a run over fewer messages, and the filing decisions were then
+        // made over whatever survived.
+        if (!r.ok) {
+          dropped.push(`${r.status} ${r.statusText}`);
+          return null;
+        }
         const m = await r.json();
         const h = headerMap(m.payload);
         return {
@@ -82,7 +90,41 @@ async function fetchInbox(auth) {
     process.stderr.write(`\r  fetching metadata… ${out.length}/${ids.length}`);
   }
   process.stderr.write("\n");
-  return out;
+  // Said, not swallowed. A sweep that could not read a fifth of the mailbox is
+  // filing decisions over a mailbox it did not see, and the counter alone
+  // cannot show that: it counts what arrived, so a half-failed run just looks
+  // like a smaller one.
+  if (dropped.length) {
+    const by = {};
+    for (const d of dropped) by[d] = (by[d] ?? 0) + 1;
+    const why = Object.entries(by).map(([k, n]) => `${n}x ${k}`).join(", ");
+    console.error(`  warning: ${dropped.length} of ${ids.length} messages could not be read (${why})`);
+  }
+  return { messages: out, complete: dropped.length === 0 };
+}
+
+// Gmail prices a request in quota units and caps them per minute per user, so
+// a mailbox this size fetched flat out spends the minute's budget in seconds
+// and then gets 403 for the rest of it. That is not a permission error and
+// not a broken credential, which is exactly how it read: the sweep saw 656 of
+// 1,331 messages refused, dropped them silently, and then died on the labels
+// call with "Cannot read properties of undefined".
+//
+// Waiting is the entire fix. The quota refills, so a request that failed for
+// this reason will succeed shortly, and the only thing to do is stop asking
+// for a moment.
+async function getWithBackoff(url, auth, attempts = 5) {
+  let wait = 2000;
+  for (let i = 0; ; i++) {
+    const r = await fetch(url, { headers: auth });
+    if (r.ok || i >= attempts) return r;
+    // 403 is the quota answer here, 429 the documented one, 5xx transient.
+    if (r.status !== 403 && r.status !== 429 && r.status < 500) return r;
+    // Jittered, so twelve workers that hit the wall together do not all come
+    // back at the same instant and hit it again.
+    await new Promise((res) => setTimeout(res, wait + Math.random() * 1000));
+    wait = Math.min(wait * 2, 60000);
+  }
 }
 
 async function loadOrScan(auth) {
@@ -98,9 +140,16 @@ async function loadOrScan(auth) {
       /* no cache */
     }
   }
-  const messages = await fetchInbox(auth);
-  await mkdir(DIR, { recursive: true });
-  await writeFile(CACHE, JSON.stringify({ scannedAt: new Date().toISOString(), messages }));
+  const { messages, complete } = await fetchInbox(auth);
+  // A partial scan is not a smaller mailbox, and caching one poisons every run
+  // for the next two hours: the failed sweep cached 718 of 1,331 messages, and
+  // the runs after it filed against those 718 while reporting nothing wrong.
+  if (complete) {
+    await mkdir(DIR, { recursive: true });
+    await writeFile(CACHE, JSON.stringify({ scannedAt: new Date().toISOString(), messages }));
+  } else {
+    console.error("  not caching an incomplete scan");
+  }
   return messages;
 }
 
@@ -116,7 +165,16 @@ async function main() {
   const { counts, unmatched } = dryRun(messages);
 
   const lr = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/labels", { headers: auth });
-  const labelId = Object.fromEntries((await lr.json()).labels.map((l) => [l.name, l.id]));
+  const lb = await lr.json();
+  // Gmail answers an error with a JSON body that has no labels in it, so
+  // reaching straight for .labels turned every API failure into "Cannot read
+  // properties of undefined (reading 'map')", which named neither the call nor
+  // the reason. Rate limits and an expired token look identical through that.
+  if (!lr.ok || !Array.isArray(lb.labels)) {
+    const why = lb?.error?.message ?? `HTTP ${lr.status}`;
+    throw new Error(`could not list labels: ${why}`);
+  }
+  const labelId = Object.fromEntries(lb.labels.map((l) => [l.name, l.id]));
 
   const ORDER = ["Jobs/Active", "Jobs/Closed", "Events", "Build", "Orders", "Money"];
 
