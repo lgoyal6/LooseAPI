@@ -22,18 +22,8 @@
  */
 import { createServer } from "node:http";
 import { execFile } from "node:child_process";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
-import { join } from "node:path";
 import { randomBytes } from "node:crypto";
-
-const SCOPES = [
-  "https://www.googleapis.com/auth/gmail.modify",
-  "https://www.googleapis.com/auth/gmail.settings.basic",
-];
-
-const DIR = join(homedir(), ".devspend");
-const CONFIG = join(DIR, "config.json");
+import { CONFIG, consentUrl, exchangeCode, loadCreds, save } from "../lib/spend/oauth.mjs";
 
 async function readStdin() {
   if (process.stdin.isTTY) return "";
@@ -51,7 +41,7 @@ const [argId, argSecret] = args;
 // secret written here on the first run do not change. Reading them back means
 // re-auth is one argument-free command and the secret never passes through argv
 // or a clipboard again.
-const stored = await readFile(CONFIG, "utf8").then(JSON.parse).catch(() => ({}));
+const stored = await loadCreds();
 const clientId = argId || stored.clientId || "";
 
 // Only consult stdin when a client id was passed, which is the first-run shape
@@ -105,25 +95,19 @@ const server = createServer(async (req, res) => {
   }
 
   const port = server.address().port;
-  const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
-    method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      client_id: clientId,
-      client_secret: clientSecret,
-      code,
-      grant_type: "authorization_code",
-      redirect_uri: `http://127.0.0.1:${port}`,
-    }),
+  const { ok, body } = await exchangeCode({
+    clientId,
+    clientSecret,
+    code,
+    redirectUri: `http://127.0.0.1:${port}`,
   });
 
-  const body = await tokenRes.json();
-  if (!tokenRes.ok || !body.refresh_token) {
+  if (!ok || !body.refresh_token) {
     res.writeHead(500, { "content-type": "text/html" });
     res.end("<h2>Token exchange failed</h2><p>Check the terminal.</p>");
     console.error(
       `\ntoken exchange failed: ${JSON.stringify(body).slice(0, 300)}\n` +
-        (tokenRes.ok
+        (ok
           ? "No refresh_token came back. That happens when this client was already\n" +
             "authorized — revoke it at myaccount.google.com/permissions and rerun."
           : ""),
@@ -132,19 +116,7 @@ const server = createServer(async (req, res) => {
     process.exit(1);
   }
 
-  // Merge rather than overwrite: config.json may already hold provider tokens.
-  await mkdir(DIR, { recursive: true });
-  let existing = {};
-  try {
-    existing = JSON.parse(await readFile(CONFIG, "utf8"));
-  } catch {
-    /* first run */
-  }
-  await writeFile(
-    CONFIG,
-    JSON.stringify({ ...existing, clientId, clientSecret, refreshToken: body.refresh_token }, null, 2),
-    { mode: 0o600 },
-  );
+  await save({ clientId, clientSecret, refreshToken: body.refresh_token });
 
   res.writeHead(200, { "content-type": "text/html" });
   res.end("<h2>Connected.</h2><p>You can close this tab and return to the terminal.</p>");
@@ -160,19 +132,12 @@ const server = createServer(async (req, res) => {
 
 server.listen(0, "127.0.0.1", () => {
   const port = server.address().port;
-  const auth = new URL("https://accounts.google.com/o/oauth2/v2/auth");
-  auth.searchParams.set("client_id", clientId);
-  auth.searchParams.set("redirect_uri", `http://127.0.0.1:${port}`);
-  auth.searchParams.set("response_type", "code");
-  auth.searchParams.set("scope", SCOPES.join(" "));
-  auth.searchParams.set("access_type", "offline"); // required for a refresh token
-  auth.searchParams.set("prompt", "consent"); // force one even on re-auth
-  auth.searchParams.set("state", state);
+  const auth = consentUrl({ clientId, redirectUri: `http://127.0.0.1:${port}`, state });
 
   console.log("Opening the consent screen. If it does not open, paste this:\n");
-  console.log(auth.toString() + "\n");
+  console.log(auth + "\n");
   console.log("Google will warn the app is unverified — that is expected for a");
   console.log("Testing-status client. Choose Advanced, then continue.\n");
   console.log(`waiting on http://127.0.0.1:${port} …`);
-  execFile("open", [auth.toString()], () => {});
+  execFile("open", [auth], () => {});
 });
