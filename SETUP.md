@@ -58,6 +58,38 @@ client — choose **Advanced**, then continue.
 requesting both would be redundant. It does **not** grant delete — this tool
 cannot remove your mail.
 
+## 3. Staying authorized
+
+A Testing-status client's refresh token
+[expires seven days after it is issued](https://developers.google.com/identity/protocols/oauth2).
+That is a property of the setup, not a fault: leaving Testing means verification
+plus a CASA assessment, because both scopes above are *restricted*.
+
+So the seven days are handled rather than removed. Every scheduled scan runs:
+
+```bash
+node bin/reconnect.mjs --check
+```
+
+which stays silent while the token is healthy, and within a day of expiry posts
+one Discord message with a link. Opening that link **on this Mac** goes straight
+to the consent screen; approving it writes the new token and immediately reruns
+the scan, so the dashboard is current before you close the tab.
+
+The link is `http://127.0.0.1:47321/start`. It is loopback-only because Google
+returns the OAuth code to this machine, so a phone on the tailnet could start
+the flow but never finish it. A window stays open for six hours, and the next
+scheduled check reopens it.
+
+To reconnect at any time without waiting to be asked:
+
+```bash
+node bin/reconnect.mjs
+```
+
+The one thing no automation removes is the consent click itself: Google
+requires a human at that screen.
+
 **If no refresh token comes back:** Google issues one only on first
 authorization. If the client was already authorized, revoke it at
 <https://myaccount.google.com/permissions> and rerun.
@@ -69,7 +101,7 @@ Only metadata is requested (From / Subject / Date) plus Gmail's own snippet.
 Bodies are never fetched. `includeSpamTrash` is on deliberately: billing mail
 that lands in Trash is exactly the mail that gets missed.
 
-## 3. Discord alerts
+## 4. Discord alerts
 
 Reuses the bot already registered on this machine rather than adding a webhook:
 token from keychain item `AGENTMON_DISCORD_TOKEN`, channel from
@@ -83,7 +115,7 @@ Only alerts you can still act on are pushed — a balance days from zero, a tria
 converting, a failed payment. A charge that already happened stays on the
 dashboard, because reading about it sooner changes nothing.
 
-## 4. Schedule it
+## 5. Schedule it
 
 ```bash
 launchctl load ~/Library/LaunchAgents/com.laksh.devspend.plist
@@ -91,7 +123,7 @@ launchctl load ~/Library/LaunchAgents/com.laksh.devspend.plist
 
 Daily at 09:15, and silent unless something new and actionable appeared.
 
-## 5. Labelling (optional)
+## 6. Labelling (optional)
 
 Two mechanisms covering different mail. You want both.
 
@@ -117,7 +149,7 @@ Classification rules for the sweep are in `lib/mail/rules.mjs`, ordered
 first-match-wins. Both files are meant to be read and edited; the buckets are a
 personal filing preference, not a fixed schema.
 
-## 6. Live provider balances (optional)
+## 7. Live provider balances (optional)
 
 Add under a `providers` key in `~/.devspend/config.json`. Each adapter skips
 cleanly when its token is missing, so partial config is fine.
@@ -150,7 +182,7 @@ The Railway, Supabase, Render and Neon adapters were written against each
 vendor's documented API but have not been executed against a live token, so
 expect to tune them on first use.
 
-## 7. API keys
+## 8. API keys
 
 ```bash
 bin/keys.mjs add <id> <provider> --free-limit 25 --note "what it is for"
