@@ -6,7 +6,7 @@
  * wrong. os.homedir() reads $HOME on POSIX, so pointing it at a fixture tree
  * exercises the real discovery path rather than a stubbed one.
  */
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -25,7 +25,7 @@ function check(label, actual, expected) {
 }
 
 /** One Codex session: a turn context, then its cumulative token total. */
-async function codexSession(home, { cwd, model, input, output }) {
+async function codexSession(home, { cwd, model, input, output, cached = 0 }) {
   const dir = join(root, home, "sessions", "2026", "08", "30");
   await mkdir(dir, { recursive: true });
   const lines = [
@@ -33,7 +33,7 @@ async function codexSession(home, { cwd, model, input, output }) {
     JSON.stringify({
       timestamp: "2026-08-30T10:01:00Z",
       type: "event_msg",
-      payload: { type: "token_count", info: { total_token_usage: { input_tokens: input, output_tokens: output } } },
+      payload: { type: "token_count", info: { total_token_usage: { input_tokens: input, cached_input_tokens: cached, output_tokens: output } } },
     }),
   ];
   await writeFile(join(dir, `rollout-${home}-${cwd.replace(/\W/g, "")}.jsonl`), lines.join("\n"));
@@ -80,6 +80,15 @@ await codexSession(".codex", { cwd: root, model: "gpt-5.6", input: 500_000, outp
 const rerun = await codexUsage({ days: 30 });
 check("a session in the home directory keys as (home)", Boolean(rerun.byProject["(home)"]), true);
 check("a nested path flattens the way Claude's does", Object.keys(rerun.byProject).sort(), ["(home)", "amac", "mint"]);
+
+// Codex's input_tokens already includes its cached tokens. A real rollout:
+// input 68,715,746, cached 66,505,984, total 68,941,797 = input + output.
+await rm(join(root, ".codex"), { recursive: true, force: true });
+await rm(join(root, ".codex-ish"), { recursive: true, force: true });
+await codexSession(".codex", { cwd: `${root}/amac`, model: "gpt-5.6", input: 1_000_000, cached: 900_000, output: 0 });
+const cachedRun = await codexUsage({ days: 30 });
+check("cached tokens are not also counted as fresh input", cachedRun.total.input, 100_000);
+check("cached tokens are counted once, as cache reads", cachedRun.total.cacheRead, 900_000);
 
 process.env.HOME = real;
 console.log(failures ? `\n${failures} FAILURE(S)` : "\nALL PASS");
